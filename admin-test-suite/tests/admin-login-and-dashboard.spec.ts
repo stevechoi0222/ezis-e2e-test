@@ -1,5 +1,106 @@
 import { test, expect, Page } from '@playwright/test';
 
+// Helper to show messages on screen
+async function showMessage(page: Page, message: string, type: 'info' | 'success' | 'error' = 'info') {
+  const configs = {
+    info: {
+      icon: '🔵',
+      gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      shadow: '0 10px 40px rgba(102, 126, 234, 0.4)'
+    },
+    success: {
+      icon: '✅',
+      gradient: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
+      shadow: '0 10px 40px rgba(56, 239, 125, 0.4)'
+    },
+    error: {
+      icon: '❌',
+      gradient: 'linear-gradient(135deg, #eb3349 0%, #f45c43 100%)',
+      shadow: '0 10px 40px rgba(244, 92, 67, 0.4)'
+    }
+  };
+
+  await page.evaluate(({ msg, config }) => {
+    // Remove existing message if any
+    const existing = document.getElementById('test-message');
+    if (existing) {
+      existing.style.animation = 'slideUp 0.3s ease';
+      setTimeout(() => existing.remove(), 300);
+    }
+
+    // Add animations and styles
+    if (!document.getElementById('test-message-styles')) {
+      const style = document.createElement('style');
+      style.id = 'test-message-styles';
+      style.textContent = `
+        @keyframes slideDown {
+          from {
+            transform: translate(-50%, -100px);
+            opacity: 0;
+          }
+          to {
+            transform: translate(-50%, 0);
+            opacity: 1;
+          }
+        }
+        @keyframes slideUp {
+          from {
+            transform: translate(-50%, 0);
+            opacity: 1;
+          }
+          to {
+            transform: translate(-50%, -100px);
+            opacity: 0;
+          }
+        }
+        @keyframes pulse {
+          0%, 100% { transform: translate(-50%, 0) scale(1); }
+          50% { transform: translate(-50%, 0) scale(1.02); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // Create message overlay
+    setTimeout(() => {
+      const messageBox = document.createElement('div');
+      messageBox.id = 'test-message';
+      messageBox.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 15px;">
+          <span style="font-size: 32px;">${config.icon}</span>
+          <span>${msg}</span>
+        </div>
+      `;
+      messageBox.style.cssText = `
+        position: fixed;
+        top: 30px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: ${config.gradient};
+        color: white;
+        padding: 24px 48px;
+        border-radius: 16px;
+        font-size: 28px;
+        font-weight: 600;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        z-index: 9999999;
+        box-shadow: ${config.shadow};
+        animation: slideDown 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55), pulse 2s ease-in-out infinite 1s;
+        backdrop-filter: blur(10px);
+        letter-spacing: 0.5px;
+      `;
+      document.body.appendChild(messageBox);
+    }, 50);
+  }, { msg: message, config: configs[type] });
+}
+
+async function hideMessage(page: Page) {
+  await page.evaluate(() => {
+    const existing = document.getElementById('test-message');
+    if (existing) existing.remove();
+  });
+}
+
 // Helper to inject a visible mouse pointer overlay
 async function installMouseHelper(page: Page) {
   await page.addInitScript(() => {
@@ -54,6 +155,12 @@ async function loginIfNeeded(page: Page) {
   // Go to the root first
   await page.goto('/');
 
+  // Wait for page to load
+  await page.waitForLoadState('domcontentloaded');
+
+  // Show login message
+  await showMessage(page, '로그인 중...', 'info');
+
   // If we already see "Administrator" in the top bar, assume logged in
   const adminLabel = page.getByText('Administrator', { exact: false });
   if (await adminLabel.isVisible().catch(() => false)) {
@@ -82,6 +189,15 @@ async function loginIfNeeded(page: Page) {
 
   // Wait until dashboard loads (Administrator text visible)
   await expect(page.getByText('Administrator', { exact: false })).toBeVisible();
+
+  // Show dashboard loaded message
+  await showMessage(page, '대시보드 로딩 완료', 'success');
+
+  // Wait 20 seconds to show the dashboard
+  await page.waitForTimeout(20000);
+
+  // Show testing message
+  await showMessage(page, '자동 테스트 진행 중...', 'info');
 }
 
 async function clickWithMouseMove(page: Page, locator: any) {
@@ -139,4 +255,8 @@ test('Admin dashboard – login and smooth visual scenario (3x)', async ({ page 
     console.log(`Scenario run #${i + 1}`);
     await runDashboardScenario(page);
   }
+
+  // Show completion message
+  await showMessage(page, '✓ 테스트 완료! 모든 기능이 정상 작동합니다.', 'success');
+  await page.waitForTimeout(5000);
 });
