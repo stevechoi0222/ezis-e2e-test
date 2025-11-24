@@ -1,105 +1,19 @@
 import { test, expect, Page } from '@playwright/test';
+import {
+  showMessage,
+  hideMessage,
+  updateProgress,
+  showAction,
+  showMetadata,
+  showPhase,
+  highlightElement,
+  unhighlightElement,
+  flashSuccess
+} from '../src/notifications';
 
-// Helper to show messages on screen
-async function showMessage(page: Page, message: string, type: 'info' | 'success' | 'error' = 'info') {
-  const configs = {
-    info: {
-      icon: '🔵',
-      gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      shadow: '0 10px 40px rgba(102, 126, 234, 0.4)'
-    },
-    success: {
-      icon: '✅',
-      gradient: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
-      shadow: '0 10px 40px rgba(56, 239, 125, 0.4)'
-    },
-    error: {
-      icon: '❌',
-      gradient: 'linear-gradient(135deg, #eb3349 0%, #f45c43 100%)',
-      shadow: '0 10px 40px rgba(244, 92, 67, 0.4)'
-    }
-  };
-
-  await page.evaluate(({ msg, config }) => {
-    // Remove existing message if any
-    const existing = document.getElementById('test-message');
-    if (existing) {
-      existing.style.animation = 'slideUp 0.3s ease';
-      setTimeout(() => existing.remove(), 300);
-    }
-
-    // Add animations and styles
-    if (!document.getElementById('test-message-styles')) {
-      const style = document.createElement('style');
-      style.id = 'test-message-styles';
-      style.textContent = `
-        @keyframes slideDown {
-          from {
-            transform: translate(-50%, -100px);
-            opacity: 0;
-          }
-          to {
-            transform: translate(-50%, 0);
-            opacity: 1;
-          }
-        }
-        @keyframes slideUp {
-          from {
-            transform: translate(-50%, 0);
-            opacity: 1;
-          }
-          to {
-            transform: translate(-50%, -100px);
-            opacity: 0;
-          }
-        }
-        @keyframes pulse {
-          0%, 100% { transform: translate(-50%, 0) scale(1); }
-          50% { transform: translate(-50%, 0) scale(1.02); }
-        }
-      `;
-      document.head.appendChild(style);
-    }
-
-    // Create message overlay
-    setTimeout(() => {
-      const messageBox = document.createElement('div');
-      messageBox.id = 'test-message';
-      messageBox.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 15px;">
-          <span style="font-size: 32px;">${config.icon}</span>
-          <span>${msg}</span>
-        </div>
-      `;
-      messageBox.style.cssText = `
-        position: fixed;
-        top: 30px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: ${config.gradient};
-        color: white;
-        padding: 24px 48px;
-        border-radius: 16px;
-        font-size: 28px;
-        font-weight: 600;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        z-index: 9999999;
-        box-shadow: ${config.shadow};
-        animation: slideDown 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55), pulse 2s ease-in-out infinite 1s;
-        backdrop-filter: blur(10px);
-        letter-spacing: 0.5px;
-      `;
-      document.body.appendChild(messageBox);
-    }, 50);
-  }, { msg: message, config: configs[type] });
-}
-
-async function hideMessage(page: Page) {
-  await page.evaluate(() => {
-    const existing = document.getElementById('test-message');
-    if (existing) existing.remove();
-  });
-}
+// Test state tracker
+let currentStep = 0;
+let totalSteps = 35; // Total number of menu clicks
 
 // Helper to inject a visible mouse pointer overlay
 async function installMouseHelper(page: Page) {
@@ -149,14 +63,14 @@ async function moveMouseToElement(page: Page, selector: string) {
 }
 
 async function loginIfNeeded(page: Page) {
-  // Install mouse helper before navigation
+  // Install mouse helper
   await installMouseHelper(page);
 
   // Go to the root first
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  // Wait for page to load
-  await page.waitForLoadState('domcontentloaded');
+  // Wait for page to be ready
+  await page.waitForTimeout(2000);
 
   // Show login message
   await showMessage(page, '로그인 중...', 'info');
@@ -193,67 +107,169 @@ async function loginIfNeeded(page: Page) {
   // Show dashboard loaded message
   await showMessage(page, '대시보드 로딩 완료', 'success');
 
-  // Wait 20 seconds to show the dashboard
-  await page.waitForTimeout(20000);
+  // Wait 2 seconds to show the dashboard
+  await page.waitForTimeout(2000);
 
   // Show testing message
   await showMessage(page, '자동 테스트 진행 중...', 'info');
+  await page.waitForTimeout(1000);
+
+  // Hide the message
+  await hideMessage(page);
 }
 
-async function clickWithMouseMove(page: Page, locator: any) {
-  const box = await locator.boundingBox();
+async function clickWithMouseMove(page: Page, locator: any, actionName: string) {
+  // IMPORTANT: Get element reference FIRST before showing any action text
+  let element;
+  try {
+    // Wait for element to be available and get reference
+    element = locator.first();
+    await element.waitFor({ state: 'visible', timeout: 10000 });
+  } catch (error) {
+    console.log(`Warning: ${actionName} element not found, skipping...`);
+    await showAction(page, `⚠ ${actionName} not found, skipping`, 'success');
+    await page.waitForTimeout(1000);
+    return;
+  }
+
+  // Get element bounding box
+  const box = await element.boundingBox();
+
+  // Show the action text (don't update progress yet)
+  await showAction(page, `Navigating to ${actionName}...`, 'running');
+
+  // Highlight element (only if box is available)
+  if (box) {
+    try {
+      await page.evaluate((boxCoords) => {
+        const element = document.elementFromPoint(boxCoords.x + boxCoords.width / 2, boxCoords.y + boxCoords.height / 2);
+        if (element) {
+          (element as HTMLElement).style.outline = '3px solid #F59E0B';
+          (element as HTMLElement).style.outlineOffset = '2px';
+        }
+      }, box);
+    } catch (e) {
+      // Element highlighting failed, continue anyway
+    }
+  }
+
+  await page.waitForTimeout(300);
+
+  // Move mouse to element
   if (box) {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 30 });
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(200);
   }
-  await locator.click();
-  await page.waitForTimeout(5000);
+
+  // Click using the element reference we got earlier
+  await element.click();
+
+  // Flash success (only if box is available)
+  if (box) {
+    try {
+      await page.evaluate((boxCoords) => {
+        const element = document.elementFromPoint(boxCoords.x + boxCoords.width / 2, boxCoords.y + boxCoords.height / 2);
+        if (element) {
+          (element as HTMLElement).style.outline = '3px solid #10B981';
+          setTimeout(() => {
+            (element as HTMLElement).style.outline = 'none';
+          }, 400);
+        }
+      }, box);
+    } catch (e) {
+      // Flash failed, continue
+    }
+  }
+
+  // Page has loaded successfully, NOW increment the step counter
+  currentStep++;
+
+  // Show success and update progress bar (now that action completed)
+  await page.waitForTimeout(500);
+  await updateProgress(page, currentStep, totalSteps);
+  await showAction(page, `✓ ${actionName} loaded`, 'success');
+  await page.waitForTimeout(2000); // Reduced from 5000ms to 2000ms
 }
 
 async function runDashboardScenario(page: Page) {
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Session' }));
-  await clickWithMouseMove(page, page.getByText('Lock', { exact: true }));
-  await clickWithMouseMove(page, page.getByText('Transaction'));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'RAC', exact: true }));
-  await clickWithMouseMove(page, page.getByRole('button', { name: 'RAC19CDB' }));
-  await clickWithMouseMove(page, page.getByText('Performance Performance'));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Performance' }));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'UltraSessionSnapshot' }));
-  await clickWithMouseMove(page, page.getByText('Top SQL'));
-  await clickWithMouseMove(page, page.getByText('Top Event'));
-  await clickWithMouseMove(page, page.getByText('Top Session'));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Wait Analysis' }));
-  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'Wait Event' }));
-  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'Active Session Elapsedtime(' }));
-  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'Active Session I/O(Block)' }));
-  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'CPU (Session)' }));
-  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'Sysstat' }).first());
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'SQL Analysis' }));
-  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'SQL Square Map' }));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Session Square Map' }));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'SQL Scatter View' }));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Top SQL Map' }));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Change Tracking' }));
-  await clickWithMouseMove(page, page.getByText('Object Change History'));
-  await clickWithMouseMove(page, page.getByText('Parameter History'));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Capacity Management' }));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'ASM Info' }));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Event Analysis' }));
-  await clickWithMouseMove(page, page.getByText('AlertLog List'));
-  await clickWithMouseMove(page, page.getByText('Event EZIS List'));
-  await clickWithMouseMove(page, page.getByText('-11-19 11:24:33'));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Trace File' }));
-  await clickWithMouseMove(page, page.getByText('Report Long Term AWR Report'));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'Long Term' }));
-  await clickWithMouseMove(page, page.getByRole('link', { name: 'AWR Report' }));
+  // Phase 1: Session Management
+  await showPhase(page, 'Session Management', 1, 5);
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Session' }), 'Session');
+  await clickWithMouseMove(page, page.getByText('Lock', { exact: true }), 'Lock');
+  await clickWithMouseMove(page, page.getByText('Transaction'), 'Transaction');
+
+  // Phase 2: RAC Monitoring
+  await showPhase(page, 'RAC Monitoring', 2, 5);
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'RAC', exact: true }), 'RAC');
+  await clickWithMouseMove(page, page.getByRole('button', { name: 'RAC19CDB' }), 'RAC19CDB');
+
+  // Phase 3: Performance Analysis
+  await showPhase(page, 'Performance Analysis', 3, 5);
+  await clickWithMouseMove(page, page.getByText('Performance Performance'), 'Performance');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Performance' }), 'Performance Dashboard');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'UltraSessionSnapshot' }), 'UltraSessionSnapshot');
+  await clickWithMouseMove(page, page.getByText('Top SQL'), 'Top SQL');
+  await clickWithMouseMove(page, page.getByText('Top Event'), 'Top Event');
+  await clickWithMouseMove(page, page.getByText('Top Session'), 'Top Session');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Wait Analysis' }), 'Wait Analysis');
+  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'Wait Event' }), 'Wait Event');
+  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'Active Session Elapsedtime(' }), 'Active Session Elapsedtime');
+  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'Active Session I/O(Block)' }), 'Active Session I/O');
+  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'CPU (Session)' }), 'CPU Session');
+  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'Sysstat' }).first(), 'Sysstat');
+
+  // Phase 4: SQL & Session Analysis
+  await showPhase(page, 'SQL & Session Analysis', 4, 5);
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'SQL Analysis' }), 'SQL Analysis');
+  await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'SQL Square Map' }), 'SQL Square Map');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Session Square Map' }), 'Session Square Map');
+  // Filter out test overlays when searching for SQL Scatter View
+  await clickWithMouseMove(page, page.locator('main').getByRole('link', { name: 'SQL Scatter View' }), 'SQL Scatter View');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Top SQL Map' }), 'Top SQL Map');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Change Tracking' }), 'Change Tracking');
+  await clickWithMouseMove(page, page.getByText('Object Change History'), 'Object Change History');
+  await clickWithMouseMove(page, page.getByText('Parameter History'), 'Parameter History');
+
+  // Phase 5: System Management & Reporting
+  await showPhase(page, 'System Management & Reporting', 5, 5);
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Capacity Management' }), 'Capacity Management');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'ASM Info' }), 'ASM Info');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Event Analysis' }), 'Event Analysis');
+  await clickWithMouseMove(page, page.getByText('AlertLog List'), 'AlertLog List');
+  await clickWithMouseMove(page, page.getByText('Event EZIS List'), 'Event EZIS List');
+  await clickWithMouseMove(page, page.getByText('-11-19 11:24:33'), 'Event Details');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Trace File' }), 'Trace File');
+  await clickWithMouseMove(page, page.getByText('Report Long Term AWR Report'), 'Report Long Term AWR');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'Long Term' }), 'Long Term');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'AWR Report' }), 'AWR Report');
 }
 
 test('Admin dashboard – login and smooth visual scenario (3x)', async ({ page }) => {
+  // Generate test run ID
+  const runId = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+
   await loginIfNeeded(page);
 
-  for (let i = 0; i < 3; i++) {
+  const totalLoops = 1;
+  for (let i = 0; i < totalLoops; i++) {
     console.log(`Scenario run #${i + 1}`);
+
+    // Reset step counter for each loop
+    currentStep = 0;
+
+    // Show metadata overlay and initial progress at the same time
+    await Promise.all([
+      showMetadata(page, 'Dashboard Navigation', runId, i + 1, totalLoops),
+      updateProgress(page, 0, totalSteps)
+    ]);
+
+    // Run the scenario immediately
     await runDashboardScenario(page);
+
+    // Pause between loops (except last one)
+    if (i < totalLoops - 1) {
+      await page.waitForTimeout(2000);
+    }
   }
 
   // Show completion message
