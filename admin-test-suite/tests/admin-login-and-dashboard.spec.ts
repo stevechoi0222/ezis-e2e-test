@@ -126,8 +126,8 @@ async function clickWithMouseMove(page: Page, locator: any, actionName: string) 
     element = locator.first();
     await element.waitFor({ state: 'visible', timeout: 10000 });
   } catch (error) {
-    console.log(`Warning: ${actionName} element not found, skipping...`);
-    await showAction(page, `⚠ ${actionName} not found, skipping`, 'success');
+    console.log(`Warning: Step ${currentStep + 1}/${totalSteps} - ${actionName} element not found, skipping...`);
+    await showAction(page, `⚠ Step ${currentStep + 1}/${totalSteps} - ${actionName} not found, skipping`, 'success');
     await page.waitForTimeout(1000);
     return;
   }
@@ -223,8 +223,7 @@ async function runDashboardScenario(page: Page) {
   await clickWithMouseMove(page, page.getByRole('link', { name: 'SQL Analysis' }), 'SQL Analysis');
   await clickWithMouseMove(page, page.getByRole('listitem').filter({ hasText: 'SQL Square Map' }), 'SQL Square Map');
   await clickWithMouseMove(page, page.getByRole('link', { name: 'Session Square Map' }), 'Session Square Map');
-  // Filter out test overlays when searching for SQL Scatter View
-  await clickWithMouseMove(page, page.locator('main').getByRole('link', { name: 'SQL Scatter View' }), 'SQL Scatter View');
+  await clickWithMouseMove(page, page.getByRole('link', { name: 'SQL Scatter View' }), 'SQL Scatter View');
   await clickWithMouseMove(page, page.getByRole('link', { name: 'Top SQL Map' }), 'Top SQL Map');
   await clickWithMouseMove(page, page.getByRole('link', { name: 'Change Tracking' }), 'Change Tracking');
   await clickWithMouseMove(page, page.getByText('Object Change History'), 'Object Change History');
