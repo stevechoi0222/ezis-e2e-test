@@ -6,3 +6,7 @@ playwright-report/
 playwright/.cache/
 admin-test-suite/nul
 
+# Environment variables
+.env
+.env.local
+
